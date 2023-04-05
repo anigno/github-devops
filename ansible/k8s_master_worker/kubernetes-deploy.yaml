@@ -1,0 +1,68 @@
+- name: Install Kubernetes on master node
+  hosts: master
+  become: true
+  tasks:
+    - name: Install Docker
+      apt:
+        name: docker.io
+        update_cache: yes
+      tags: [docker]
+
+    - name: Install Kubernetes
+      apt:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - kubelet
+        - kubeadm
+        - kubectl
+      tags: [kubernetes]
+
+    - name: Initialize Kubernetes master
+      command: kubeadm init --apiserver-advertise-address={{ hostvars['master']['ansible_default_ipv4']['address'] }} --pod-network-cidr=10.244.0.0/16
+      args:
+        creates: /etc/kubernetes/admin.conf
+      register: init_output
+      tags: [kubernetes]
+
+    - name: Copy Kubernetes configuration to user's home directory
+      copy:
+        content: "{{ hostvars['master']['init_output']['stdout_lines'][-1] }}"
+        dest: $HOME/.kube/config
+      environment:
+        HOME: "/root"
+      tags: [kubernetes]
+
+    - name: Install Flannel networking plugin
+      command: kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
+      args:
+        creates: /etc/kubernetes/manifests/kube-flannel.yaml
+      tags: [kubernetes]
+
+- name: Join worker node to Kubernetes cluster
+  hosts: worker
+  become: true
+  vars:
+    join_command: "{{ hostvars['master']['init_output']['stdout_lines'][-3] }}"
+  tasks:
+    - name: Install Docker
+      apt:
+        name: docker.io
+        update_cache: yes
+      tags: [docker]
+
+    - name: Install Kubernetes
+      apt:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - kubelet
+        - kubeadm
+        - kubectl
+      tags: [kubernetes]
+
+    - name: Join worker node to cluster
+      command: "{{ join_command }}"
+      args:
+        creates: /etc/kubernetes/kubelet.conf
+      tags: [kubernetes]
